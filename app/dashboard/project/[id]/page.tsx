@@ -1,7 +1,7 @@
 import ProjectDetailClient from './ProjectDetailClient'
 
 export async function generateStaticParams() {
-  return []
+  return [{ id: 'placeholder' }]
 }
 
 export default function ProjectDetailPage({ params }: { params: { id: string } }) {
