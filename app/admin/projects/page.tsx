@@ -177,10 +177,10 @@ export default function AdminProjectsPage() {
                     {new Date(project.created_at).toLocaleDateString('ro-RO')}
                   </td>
                   <td className="px-4 py-3.5">
-                    <Link href={`/admin/projects/${project.id}`}
-                      className="text-xs text-orange-600 hover:text-orange-700 font-medium">
-                      View →
-                    </Link>
+                    <button onClick={() => window.location.href = `/admin/projects/${project.id}/`}
+  className="text-xs text-orange-600 hover:text-orange-700 font-medium">
+  View →
+</button>
                   </td>
                 </tr>
               ))}
