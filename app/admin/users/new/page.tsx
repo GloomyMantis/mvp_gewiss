@@ -7,7 +7,6 @@ import Link from 'next/link'
 
 export default function AddDesignerPage() {
   const router = useRouter()
-  const supabase = createClient()
 
   const [form, setForm] = useState({
     username: '',
@@ -25,36 +24,38 @@ export default function AddDesignerPage() {
     setError('')
 
     try {
+      const supabase = createClient()
       const email = `${form.username.trim().toLowerCase()}@gewiss.local`
 
-      // Create auth user using service role key
-      const serviceClient = createClient()
-      const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!,
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!}`,
-        },
-        body: JSON.stringify({
-          email,
-          password: form.password,
-          email_confirm: true,
-        }),
+      // Get current admin session to restore later
+      const { data: { session: adminSession } } = await supabase.auth.getSession()
+
+      // Sign up new designer user
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password: form.password,
       })
 
-      const authData = await response.json()
-      if (!response.ok) throw new Error(authData.message || 'Failed to create user')
+      if (signUpError) throw signUpError
+      if (!signUpData.user) throw new Error('Failed to create user')
 
-      // Insert into users table
+      // Insert profile
       const { error: profileError } = await supabase.from('users').insert({
-        id: authData.id,
+        id: signUpData.user.id,
         username: form.username.trim().toLowerCase(),
         company_name: form.company_name.trim(),
         role: 'designer',
       })
 
       if (profileError) throw profileError
+
+      // Restore admin session
+      if (adminSession) {
+        await supabase.auth.setSession({
+          access_token: adminSession.access_token,
+          refresh_token: adminSession.refresh_token,
+        })
+      }
 
       setSuccess(true)
       setTimeout(() => router.push('/admin/designers'), 1500)
@@ -112,7 +113,7 @@ export default function AddDesignerPage() {
               required
               autoFocus
             />
-            <p className="text-xs text-gray-400 mt-1">Login will use: {form.username || 'username'}@gewiss.local</p>
+            <p className="text-xs text-gray-400 mt-1">Login: {form.username || 'username'}</p>
           </div>
 
           <div>
