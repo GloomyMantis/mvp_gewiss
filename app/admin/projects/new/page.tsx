@@ -1,200 +1,223 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { Upload, X, FileText, CheckCircle2, ArrowLeft, Plus } from 'lucide-react'
 import Link from 'next/link'
-import { Search, Plus, X } from 'lucide-react'
-import { StatusBadge } from '@/components/ui/StatusBadge'
-import { ProjectStatus, STATUS_LABELS } from '@/lib/types'
 
-const ALL_STATUSES: ProjectStatus[] = ['registered', 'in_quotation', 'sale_secured', 'completed', 'reward_paid']
-
-export default function AdminProjectsPage() {
+export default function AdminNewProjectPage() {
+  const router = useRouter()
   const supabase = createClient()
-  const [projects, setProjects] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'all'>('all')
-  const [pendingOnly, setPendingOnly] = useState(false)
-  const [designerFilter, setDesignerFilter] = useState<string | null>(null)
-  const [designerName, setDesignerName] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [designers, setDesigners] = useState<any[]>([])
+  const [form, setForm] = useState({
+    project_name: '',
+    installer_name: '',
+    beneficiary_name: '',
+    observations: '',
+    project_value: '',
+    designer_id: '',
+  })
+  const [boqFiles, setBoqFiles] = useState<{ file: File; displayName: string }[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState(false)
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const d = params.get('designer')
-    if (d) setDesignerFilter(d)
-    fetchProjects(d)
+    supabase.from('users').select('id, username, company_name').eq('role', 'designer').order('company_name')
+      .then(({ data }) => setDesigners(data ?? []))
   }, [])
 
-  const fetchProjects = async (designerId?: string | null) => {
-    const { data } = await supabase
-      .from('projects')
-      .select('*, designer:users(id, username, company_name)')
-      .order('created_at', { ascending: false })
-    setProjects(data ?? [])
-    if (designerId && data) {
-      const found = data.find((p: any) => p.designer?.id === designerId)
-      if (found) setDesignerName(found.designer?.company_name)
+  const handleAddFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.[0]) {
+      const file = e.target.files[0]
+      setBoqFiles(prev => [...prev, { file, displayName: file.name.replace(/\.[^/.]+$/, '') }])
+      e.target.value = ''
     }
-    setLoading(false)
   }
 
-  const clearDesignerFilter = () => {
-    setDesignerFilter(null)
-    setDesignerName(null)
-    window.history.replaceState({}, '', '/admin/projects')
+  const removeFile = (idx: number) => setBoqFiles(prev => prev.filter((_, i) => i !== idx))
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.designer_id) { setError('Please select a designer.'); return }
+    setLoading(true)
+    setError('')
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('Not authenticated')
+
+      const { data: project, error: insertError } = await supabase
+        .from('projects')
+        .insert({
+          project_name: form.project_name.trim(),
+          installer_name: form.installer_name.trim(),
+          beneficiary_name: form.beneficiary_name.trim(),
+          observations: form.observations.trim() || null,
+          project_value: form.project_value ? parseFloat(form.project_value) : null,
+          designer_id: form.designer_id,
+          status: 'registered',
+          reward_paid: false,
+        })
+        .select()
+        .single()
+
+      if (insertError) throw insertError
+
+      for (const { file, displayName } of boqFiles) {
+        const ext = file.name.split('.').pop()
+        const fileName = `${form.designer_id}/${project.id}/${Date.now()}.${ext}`
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('boq-files').upload(fileName, file)
+        if (uploadError) throw uploadError
+        await supabase.from('boq_files').insert({
+          project_id: project.id,
+          file_path: uploadData.path,
+          file_name: file.name,
+          display_name: displayName.trim() || file.name,
+          file_size_bytes: file.size,
+          uploaded_by: user.id,
+        })
+      }
+
+      setSuccess(true)
+      setTimeout(() => router.push('/admin/projects'), 1500)
+    } catch (err: any) {
+      setError(err.message || 'Failed to create project.')
+      setLoading(false)
+    }
   }
 
-  const filtered = projects.filter(p => {
-    if (designerFilter && p.designer?.id !== designerFilter) return false
-    if (statusFilter !== 'all' && p.status !== statusFilter) return false
-    if (pendingOnly && !(p.status === 'completed' && !p.reward_paid)) return false
-    if (search) {
-      const q = search.toLowerCase()
-      return (
-        p.project_name?.toLowerCase().includes(q) ||
-        p.beneficiary_name?.toLowerCase().includes(q) ||
-        p.installer_name?.toLowerCase().includes(q) ||
-        p.designer?.company_name?.toLowerCase().includes(q)
-      )
-    }
-    return true
-  })
+  if (success) {
+    return (
+      <div className="p-8 max-w-xl mx-auto flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CheckCircle2 className="w-8 h-8 text-green-600" />
+          </div>
+          <h2 className="text-xl font-semibold text-gray-900">Project Created!</h2>
+          <p className="text-gray-500 text-sm mt-1">Redirecting...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">All Projects</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{filtered.length} projects</p>
-        </div>
-        <Link href="/admin/projects/new"
-          className="flex items-center gap-2 px-4 py-2.5 bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium rounded-xl transition-all">
-          <Plus className="w-4 h-4" /> New Project
+    <div className="p-8 max-w-xl mx-auto">
+      <div className="mb-8">
+        <Link href="/admin/projects" className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-600 mb-4 transition-colors">
+          <ArrowLeft className="w-4 h-4" /> Back
         </Link>
+        <h1 className="text-2xl font-semibold text-gray-900">New Project</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Add a project on behalf of a designer</p>
       </div>
 
-      {/* Designer filter banner */}
-      {designerFilter && designerName && (
-        <div className="mb-4 flex items-center gap-2 p-3 bg-orange-50 border border-orange-100 rounded-xl text-sm text-orange-700">
-          <span>Showing projects for <span className="font-semibold">{designerName}</span></span>
-          <button onClick={clearDesignerFilter} className="ml-auto flex items-center gap-1 text-orange-500 hover:text-orange-700">
-            <X className="w-4 h-4" /> Clear filter
-          </button>
-        </div>
-      )}
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {error && <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-sm text-red-700">{error}</div>}
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search projects, companies..."
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-          />
-        </div>
+        <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Project Info</h2>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => { setStatusFilter('all'); setPendingOnly(false) }}
-            className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
-              statusFilter === 'all' && !pendingOnly ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'
-            }`}
-          >
-            All
-          </button>
-          {ALL_STATUSES.map(s => (
-            <button
-              key={s}
-              onClick={() => { setStatusFilter(s); setPendingOnly(false) }}
-              className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
-                statusFilter === s ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {STATUS_LABELS[s]}
-            </button>
-          ))}
-          <button
-            onClick={() => { setPendingOnly(!pendingOnly); setStatusFilter('all') }}
-            className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
-              pendingOnly ? 'bg-red-600 text-white' : 'bg-white text-red-500 border border-red-200 hover:bg-red-50'
-            }`}
-          >
-            Pending Pay
-          </button>
-        </div>
-      </div>
-
-      {/* Table */}
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="w-6 h-6 border-2 border-gray-200 border-t-orange-600 rounded-full animate-spin" />
-        </div>
-      ) : (
-        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-50">
-                <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wide px-5 py-3.5">Project</th>
-                <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wide px-4 py-3.5">Designer</th>
-                <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wide px-4 py-3.5">Beneficiary</th>
-                <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wide px-4 py-3.5">Value</th>
-                <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wide px-4 py-3.5">Status</th>
-                <th className="text-left text-xs font-semibold text-gray-400 uppercase tracking-wide px-4 py-3.5">Date</th>
-                <th className="px-4 py-3.5"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {filtered.map((project: any) => (
-                <tr key={project.id} className="hover:bg-gray-50/50 transition-colors">
-                  <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-900">{project.project_name}</span>
-                      {project.boq_file_path && (
-                        <span className="text-[10px] bg-orange-50 text-orange-600 px-1.5 py-0.5 rounded font-medium">BOQ</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-0.5">{project.installer_name}</div>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <div className="text-sm text-gray-700">{project.designer?.company_name}</div>
-                    <div className="text-xs text-gray-400">@{project.designer?.username}</div>
-                  </td>
-                  <td className="px-4 py-3.5 text-sm text-gray-600">{project.beneficiary_name}</td>
-                  <td className="px-4 py-3.5 text-sm text-gray-600">
-                    {project.project_value ? `€ ${Number(project.project_value).toLocaleString('ro-RO')}` : '—'}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <StatusBadge status={project.status as ProjectStatus} />
-                    {project.status === 'completed' && !project.reward_paid && (
-                      <div className="text-xs text-red-500 mt-1 font-medium">⚠ Unpaid</div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3.5 text-xs text-gray-400">
-                    {new Date(project.created_at).toLocaleDateString('ro-RO')}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <Link href={`/admin/projects/${project.id}`}
-                      className="text-xs text-orange-600 hover:text-orange-700 font-medium">
-                      View →
-                    </Link>
-                  </td>
-                </tr>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Designer <span className="text-red-400">*</span></label>
+            <select value={form.designer_id} onChange={e => setForm({ ...form, designer_id: e.target.value })}
+              className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all" required>
+              <option value="">Select designer...</option>
+              {designers.map(d => (
+                <option key={d.id} value={d.id}>{d.company_name} (@{d.username})</option>
               ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="text-center py-12 text-sm text-gray-400">
-                    No projects found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            </select>
+          </div>
+
+          {[
+            { key: 'project_name', label: 'Project Name', placeholder: 'e.g. Industrial Complex Pitești', required: true },
+            { key: 'beneficiary_name', label: 'Beneficiary Name', placeholder: 'e.g. SC Construct SRL', required: true },
+            { key: 'installer_name', label: 'Installer Name', placeholder: 'e.g. Electro Install SRL', required: true },
+          ].map(({ key, label, placeholder, required }) => (
+            <div key={key}>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                {label} {required && <span className="text-red-400">*</span>}
+              </label>
+              <input type="text" value={(form as any)[key]} onChange={e => setForm({ ...form, [key]: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
+                placeholder={placeholder} required={required} />
+            </div>
+          ))}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Project Value (EUR)</label>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
+              <input type="number" min="0" step="0.01" value={form.project_value}
+                onChange={e => setForm({ ...form, project_value: e.target.value })}
+                className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
+                placeholder="0.00" />
+            </div>
+          </div>
         </div>
-      )}
+
+        <div className="bg-white rounded-2xl border border-gray-100 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">BOQ Documents</h2>
+            <button type="button" onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 text-xs text-orange-600 hover:text-orange-700 font-medium">
+              <Plus className="w-3.5 h-3.5" /> Add File
+            </button>
+          </div>
+          <input ref={fileInputRef} type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" onChange={handleAddFile} className="hidden" />
+
+          {boqFiles.length === 0 ? (
+            <div onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-gray-200 rounded-xl p-5 text-center cursor-pointer hover:border-orange-300 hover:bg-orange-50/50 transition-all">
+              <Upload className="w-5 h-5 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm text-gray-500">Drop files here or <span className="text-orange-600 font-medium">browse</span></p>
+              <p className="text-xs text-gray-400 mt-1">PDF, Excel, Word</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {boqFiles.map((f, i) => (
+                <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <FileText className="w-4 h-4 text-orange-500 flex-shrink-0" />
+                  <input type="text" value={f.displayName}
+                    onChange={e => setBoqFiles(prev => prev.map((x, xi) => xi === i ? { ...x, displayName: e.target.value } : x))}
+                    className="flex-1 bg-transparent text-sm text-gray-700 focus:outline-none border-b border-transparent focus:border-orange-400"
+                    placeholder="Document name..." />
+                  <span className="text-xs text-gray-400">{f.file.name.split('.').pop()?.toUpperCase()}</span>
+                  <button type="button" onClick={() => removeFile(i)} className="text-gray-300 hover:text-red-500 transition-colors">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              <button type="button" onClick={() => fileInputRef.current?.click()}
+                className="w-full py-2 border border-dashed border-gray-200 rounded-xl text-xs text-gray-400 hover:border-orange-300 hover:text-orange-500 transition-all flex items-center justify-center gap-1.5">
+                <Plus className="w-3.5 h-3.5" /> Add another file
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl border border-gray-100 p-5">
+          <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+            Observations <span className="text-gray-300 font-normal normal-case">(optional)</span>
+          </label>
+          <textarea value={form.observations} onChange={e => setForm({ ...form, observations: e.target.value })}
+            className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all resize-none"
+            placeholder="Any notes about the project..." rows={3} />
+        </div>
+
+        <button type="submit" disabled={loading}
+          className="w-full py-3 px-4 bg-orange-600 hover:bg-orange-700 disabled:opacity-60 text-white font-medium rounded-xl transition-all">
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Creating project...
+            </span>
+          ) : 'Create Project'}
+        </button>
+      </form>
     </div>
   )
 }
