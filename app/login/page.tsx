@@ -35,7 +35,7 @@ export default function LoginPage() {
       }
 
       // Sign in with email (username@gewiss.local convention)
-      const email = `${username.trim().toLowerCase()}@gewiss.local`
+      const email = `${username.trim().toLowerCase()}@gewiss.com`
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
