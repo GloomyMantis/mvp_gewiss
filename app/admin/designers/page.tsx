@@ -62,8 +62,10 @@ export default function AdminDesignersPage() {
     fetchAll()
   }
 
+  const PRESCRIBERS = ['Florin Stoita', 'Vlad Coman', 'Alexandru Hobean', 'Vlad Rojisteanu', 'Valentin Nacu']
+
   // Unique prescribers for filter
-  const prescribers = Array.from(new Set(designers.map(d => d.prescriber).filter(Boolean)))
+  const prescribers = PRESCRIBERS.filter(p => designers.some(d => d.prescriber === p))
 
   const designerStats = designers
     .filter(d => prescriberFilter === 'all' || d.prescriber === prescriberFilter)
@@ -184,9 +186,11 @@ export default function AdminDesignersPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   Prescriber Gewiss <span className="text-gray-400 font-normal">(opțional)</span>
                 </label>
-                <input type="text" value={editForm.prescriber} onChange={e => setEditForm(f => ({ ...f, prescriber: e.target.value }))}
-                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all"
-                  placeholder="e.g. Ion Popescu" />
+                <select value={editForm.prescriber} onChange={e => setEditForm(f => ({ ...f, prescriber: e.target.value }))}
+                  className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all">
+                  <option value="">— Neatribuit —</option>
+                  {PRESCRIBERS.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
               </div>
             </div>
             <div className="flex gap-3 mt-6">
@@ -241,3 +245,4 @@ function Stat({ label, value, icon, color = 'text-gray-700' }: { label: string; 
     </div>
   )
 }
+
